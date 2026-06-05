@@ -52,6 +52,15 @@ def find_tool(name):
     return found
 
 
+def find_resource(name):
+    """Locate a bundled resource (icon, etc.) next to the script/exe or in _MEIPASS."""
+    for d in _candidate_dirs():
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 FFMPEG = find_tool("ffmpeg")
 FFPROBE = find_tool("ffprobe")
 
@@ -137,6 +146,8 @@ def output_args(fmt):
         return ["-c:a", "libmp3lame", "-b:a", "320k"], ".mp3"
     if fmt == "flac":
         return ["-c:a", "flac"], ".flac"
+    if fmt == "opus":
+        return ["-c:a", "libopus", "-b:a", "192k"], ".opus"
     return ["-c:a", "pcm_s16le"], ".wav"  # wav
 
 
@@ -175,6 +186,8 @@ class NightcoreApp:
 
         self._build_ui()
         self._sync_link()
+        self._dark_titlebar()
+        self._set_window_icon()
         self.root.after(100, self._drain_log)
 
         if not FFMPEG or not FFPROBE:
@@ -184,18 +197,126 @@ class NightcoreApp:
                 "this program (the build script bundles them automatically)."
             )
 
-    def _build_ui(self):
-        pad = {"padx": 10, "pady": 6}
+    # --- dark theme (Windows 10 dark) ---
+    # Palette (kept in one place so it's easy to tweak)
+    BG    = "#1f1f1f"   # window background (Win10 dark)
+    SURF  = "#2d2d2d"   # raised surfaces: frames, entries, list
+    SURF2 = "#3a3a3a"   # hover / active surfaces
+    FG    = "#ffffff"   # primary text
+    MUTED = "#a0a0a0"   # secondary text
+    LINE  = "#555555"   # borders / separators
+    ACC   = "#0078d4"   # accent (Windows blue)
+    ACC2  = "#1a86d9"   # accent hover
+    SEL   = "#0078d4"   # selection background
+
+    def _apply_dark_theme(self):
+        c = self
+        self.root.configure(bg=c.BG)
         style = ttk.Style()
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
 
+        style.configure(".", background=c.BG, foreground=c.FG,
+                        fieldbackground=c.SURF, bordercolor=c.LINE,
+                        lightcolor=c.SURF, darkcolor=c.BG, focuscolor=c.ACC)
+        style.configure("TFrame", background=c.BG)
+        style.configure("TLabel", background=c.BG, foreground=c.FG)
+        style.configure("TLabelframe", background=c.BG, bordercolor=c.LINE,
+                        relief="solid", borderwidth=1)
+        style.configure("TLabelframe.Label", background=c.BG, foreground=c.MUTED)
+
+        # Buttons: flat, accent on hover
+        style.configure("TButton", background=c.SURF, foreground=c.FG,
+                        bordercolor=c.LINE, relief="flat", padding=(12, 6),
+                        focusthickness=0)
+        style.map("TButton",
+                  background=[("active", c.SURF2), ("pressed", c.ACC),
+                              ("disabled", c.BG)],
+                  foreground=[("pressed", "#ffffff"), ("disabled", c.MUTED)])
+
+        # Checkbuttons
+        style.configure("TCheckbutton", background=c.BG, foreground=c.FG,
+                        focuscolor=c.BG)
+        style.map("TCheckbutton",
+                  background=[("active", c.BG)],
+                  indicatorcolor=[("selected", c.ACC), ("!selected", c.SURF)],
+                  foreground=[("disabled", c.MUTED)])
+
+        # Entries / combobox
+        style.configure("TEntry", fieldbackground=c.SURF, foreground=c.FG,
+                        insertcolor=c.FG, bordercolor=c.LINE, padding=4)
+        style.configure("TCombobox", fieldbackground=c.SURF, background=c.SURF,
+                        foreground=c.FG, arrowcolor=c.FG, bordercolor=c.LINE,
+                        padding=4)
+        style.map("TCombobox",
+                  fieldbackground=[("readonly", c.SURF)],
+                  foreground=[("readonly", c.FG)])
+
+        # Sliders
+        style.configure("Horizontal.TScale", background=c.BG,
+                        troughcolor=c.SURF, bordercolor=c.LINE)
+        style.map("Horizontal.TScale", background=[("active", c.BG)])
+
+        # Progress bar + scrollbar
+        style.configure("Horizontal.TProgressbar", background=c.ACC,
+                        troughcolor=c.SURF, bordercolor=c.LINE, lightcolor=c.ACC,
+                        darkcolor=c.ACC)
+        style.configure("Vertical.TScrollbar", background=c.SURF2,
+                        troughcolor=c.SURF, bordercolor=c.BG, arrowcolor=c.FG)
+        style.map("Vertical.TScrollbar", background=[("active", c.ACC)])
+
+    def _set_window_icon(self):
+        """Title-bar / taskbar icon. On Windows use the multi-resolution .ico so
+        Windows renders a crisp pre-made size for each context (title bar, taskbar);
+        on other platforms fall back to the PNG via iconphoto."""
+        try:
+            if os.name == "nt":
+                ico = find_resource("icon.ico")
+                if ico:
+                    self.root.iconbitmap(default=ico)
+                return
+            png = find_resource("nightcoreMaker_transparent.png")
+            if png:
+                self._icon_img = tk.PhotoImage(file=png)  # keep a reference
+                self.root.iconphoto(True, self._icon_img)
+        except Exception:
+            pass
+
+    def _dark_titlebar(self):
+        """Tell Windows to draw the title bar in dark mode (Win10 1809+ / Win11)."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            self.root.update_idletasks()  # make sure the native window exists
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            val = ctypes.c_int(1)  # 1 = use dark title bar
+            # Attribute 20 on modern builds; 19 on Win10 builds before 20H1.
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 20, ctypes.byref(val), ctypes.sizeof(val)) != 0:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 19, ctypes.byref(val), ctypes.sizeof(val))
+            # Nudge the frame so the title bar repaints immediately.
+            self.root.withdraw()
+            self.root.deiconify()
+        except Exception:
+            pass
+
+    def _build_ui(self):
+        pad = {"padx": 10, "pady": 6}
+        c = self
+        self._apply_dark_theme()
+
         # Files
         frm_files = ttk.LabelFrame(self.root, text="Songs")
         frm_files.pack(fill="both", expand=True, **pad)
-        self.lst = tk.Listbox(frm_files, height=6, selectmode=tk.EXTENDED)
+        self.lst = tk.Listbox(frm_files, height=6, selectmode=tk.EXTENDED,
+                              bg=c.SURF, fg=c.FG, selectbackground=c.SEL,
+                              selectforeground="#ffffff", highlightthickness=1,
+                              highlightbackground=c.LINE, highlightcolor=c.ACC,
+                              borderwidth=0, activestyle="none")
         self.lst.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
         sb = ttk.Scrollbar(frm_files, orient="vertical", command=self.lst.yview)
         sb.pack(side="left", fill="y", pady=8)
@@ -251,7 +372,7 @@ class NightcoreApp:
         ttk.Button(r, text="Browse…", command=self.pick_out).pack(side="left")
         r2 = ttk.Frame(frm_out); r2.pack(fill="x", padx=8, pady=4)
         ttk.Label(r2, text="Format:").pack(side="left")
-        ttk.Combobox(r2, textvariable=self.fmt, values=["mp3", "wav", "flac"],
+        ttk.Combobox(r2, textvariable=self.fmt, values=["mp3", "wav", "flac", "opus"],
                      width=6, state="readonly").pack(side="left", padx=6)
         ttk.Label(r2, text="Name suffix:").pack(side="left", padx=(12, 0))
         ttk.Entry(r2, textvariable=self.suffix, width=16).pack(side="left", padx=6)
@@ -263,7 +384,11 @@ class NightcoreApp:
         self.prog = ttk.Progressbar(frm_act, mode="determinate")
         self.prog.pack(side="left", fill="x", expand=True, padx=10)
 
-        self.log = tk.Text(self.root, height=6, state="disabled", wrap="word")
+        self.log = tk.Text(self.root, height=6, state="disabled", wrap="word",
+                           bg=c.SURF, fg=c.MUTED, insertbackground=c.FG,
+                           highlightthickness=1, highlightbackground=c.LINE,
+                           highlightcolor=c.ACC, borderwidth=0,
+                           font=("Consolas", 9), padx=8, pady=6)
         self.log.pack(fill="both", expand=False, padx=10, pady=(0, 10))
 
     # --- slider handling ---
@@ -390,7 +515,20 @@ class NightcoreApp:
         messagebox.showinfo(APP_TITLE, "Finished. Check your output folder.")
 
 
+def _set_app_user_model_id():
+    """Without an explicit AppUserModelID, Windows shows the host (pythonw) icon
+    in the taskbar instead of our window icon. Set it before the window exists."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "NightcoreMaker.App")
+        except Exception:
+            pass
+
+
 def main():
+    _set_app_user_model_id()
     root = tk.Tk()
     NightcoreApp(root)
     root.mainloop()

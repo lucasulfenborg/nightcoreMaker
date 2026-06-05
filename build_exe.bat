@@ -52,11 +52,8 @@ if errorlevel 1 (
 :have_ffmpeg
 echo.
 echo Building the .exe ...
-python -m PyInstaller --noconfirm --onefile --windowed ^
-  --name NightcoreMaker ^
-  --add-binary "ffmpeg.exe;." ^
-  --add-binary "ffprobe.exe;." ^
-  nightcore.py
+REM Build from the .spec so the app icon and bundled icon files are included.
+python -m PyInstaller --noconfirm NightcoreMaker.spec
 if errorlevel 1 (echo [ERROR] build failed & pause & exit /b 1)
 
 echo.

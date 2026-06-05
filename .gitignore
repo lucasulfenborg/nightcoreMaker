@@ -1,0 +1,20 @@
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak
+
+# Bundled audio engine (downloaded by build_exe.bat; too large for git)
+ffmpeg.exe
+ffprobe.exe
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store
